@@ -1,3 +1,5 @@
+## MYTEMP, possibly seperable into train.py
+
 import argparse
 import torch
 import numpy as np
@@ -25,11 +27,7 @@ import datasets.imagenetv2
 import datasets.imagenet_a
 import datasets.imagenet_r
 
-import trainers.zsclip
-import trainers.coop
-import trainers.cocoop
-import trainers.rpo
-import trainers.linear_prob
+import trainers.mytemp
 
 
 
@@ -79,6 +77,8 @@ def reset_cfg(cfg, args):
         cfg.MODEL.HEAD.NAME = args.head
 
 
+
+
 def extend_cfg(cfg):
     """
     Add new config variables.
@@ -91,34 +91,23 @@ def extend_cfg(cfg):
         cfg.TRAINER.MY_MODEL.PARAM_C = False
     """
     from yacs.config import CfgNode as CN
-
-    cfg.TRAINER.RPO = CN()
-    cfg.TRAINER.RPO.K = 1
-    cfg.TRAINER.RPO.CTX_INIT = ''
-    cfg.TRAINER.RPO.PREC = 'fp16'
-
-
-    cfg.TRAINER.COCOOP = CN()
-    cfg.TRAINER.COCOOP.N_CTX = 4
-    cfg.TRAINER.COCOOP.CTX_INIT = 'a photo of a'
-    cfg.TRAINER.COCOOP.PREC = 'fp16'
-
-    cfg.TRAINER.COOP = CN()
-    cfg.TRAINER.COOP.N_CTX = 4
-    cfg.TRAINER.COOP.CSC = False
-    cfg.TRAINER.COOP.CLASS_TOKEN_POSITION = ''
-    cfg.TRAINER.COOP.PREC = 'fp16'
-    cfg.TRAINER.COOP.CTX_INIT = ''
     
-    cfg.TRAINER.LP = CN()
-    cfg.TRAINER.LP.PREC = 'fp16'
-    cfg.TRAINER.LP.PROMPT = 'A photo of a {cls_name}'
-
+    cfg.VERBOSE = True
+    cfg.TRAINER.MYTEMP = CN()
+    cfg.TRAINER.MYTEMP.K = 8
+    cfg.TRAINER.MYTEMP.CTX_INIT = ''
+    cfg.TRAINER.MYTEMP.PROMPT_DEPTH = 9
+    cfg.TRAINER.MYTEMP.PREC = 'fp16'
+    cfg.TRAINER.MYTEMP.MAPLE_LENGTH = 4
 
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
     cfg.DATASET.PROMPT = "a photo of a _."
-
-
+    cfg.DATASET.NUM_SHOTS = 16
+    
+    cfg.DATASET.SUBSAMPLE_CLASSES = None
+    cfg.DATALOADER.TRAIN_X.BATCH_SIZE = None
+    cfg.OPTIM.MAX_EPOCH = None
+        
 def setup_cfg(args):
     cfg = get_cfg_default()
     extend_cfg(cfg)
@@ -147,7 +136,7 @@ def main(args):
     if cfg.SEED >= 0:
         print("Setting fixed seed: {}".format(cfg.SEED))
         set_random_seed(cfg.SEED)
-        
+
     setup_logger(cfg.OUTPUT_DIR)
 
     if torch.cuda.is_available() and cfg.USE_CUDA:
@@ -167,10 +156,8 @@ def main(args):
         trainer.test()
         return
 
-    if not args.no_train:
-        trainer.train()
-
-
+    #if not args.no_train:
+    trainer.train()
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=str, default="", help="path to dataset")
@@ -224,5 +211,7 @@ if __name__ == "__main__":
         nargs=argparse.REMAINDER,
         help="modify config options using the command-line",
     )
+    parser.add_argument("--subsample-classes", type=str, default="base")
     args = parser.parse_args()
     main(args)
+    

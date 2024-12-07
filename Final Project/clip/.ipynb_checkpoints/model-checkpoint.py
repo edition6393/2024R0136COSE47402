@@ -89,6 +89,7 @@ class AttentionPool2d(nn.Module):
 
         return x[0]
 
+
 class ModifiedResNet(nn.Module):
     """
     A ResNet class that is similar to torchvision's but contains the following changes:
@@ -98,10 +99,12 @@ class ModifiedResNet(nn.Module):
     """
 
     def __init__(self, layers, output_dim, heads, input_resolution=224, width=64):
-        raise NotImplementedError
         super().__init__()
         self.output_dim = output_dim
         self.input_resolution = input_resolution
+
+        ##debug
+        raise NotImplementedError
 
         # the 3-layer stem
         self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1, bias=False)
@@ -149,6 +152,7 @@ class ModifiedResNet(nn.Module):
 
         return x
 
+
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
 
@@ -180,6 +184,8 @@ class ResidualAttentionBlock_MYTEMP(nn.Module):
         self.text_layer = text_layer
         self.attn_mask = attn_mask
         # This must be consistent with the config file prompt
+        print(design_details, )
+
         self.compound_prompt_nctx = design_details['maple_length']
         if i == 0:
             self.first_layer = True
@@ -197,8 +203,6 @@ class ResidualAttentionBlock_MYTEMP(nn.Module):
         # For the first layer, we do not need to add any duplicate, as it is already added
         # as the shallow version
         x = inputs[0]
-        if attn_mask is None:
-            raise NotImplementedError
         compound_prompts_deeper = inputs[1]
         counter = inputs[2]
         if not self.first_layer:
@@ -253,6 +257,8 @@ class Transformer(nn.Module):
         self.width = width
         self.layers = layers
         self.attn_mask = attn_mask
+        if design_details is None:
+            raise NotImplementedError
         self.resblocks = nn.Sequential(
                 *[ResidualAttentionBlock_MYTEMP(width, heads, attn_mask, design_details, text_layer, i)
                   for i in range(layers)])
@@ -268,7 +274,7 @@ class Transformer(nn.Module):
 
 class VisionTransformer_MYTEMP(nn.Module):
     def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,
-                 design_details=None):
+                 design_details):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
@@ -281,13 +287,12 @@ class VisionTransformer_MYTEMP(nn.Module):
         # hyper-parameter if need to add prompt embeddings inside to the input
         # of transformer block or not:
         self.prompt_till_layer_visual = 0
-        if design_details is None:
-            raise ValueError
-        self.transformer = Transformer(width, layers, heads, prompts_needed=self.prompt_till_layer_visual, design_details=design_details)
+        self.transformer = Transformer(width, layers, heads, design_details=design_details)
+
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor, shared_maple_ctx, compound_deeper_prompts, rpo_visual_ctx_prompt, attn_mask: torch.Tensor):
+    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor, shared_ctx, compound_deeper_prompts):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -299,11 +304,8 @@ class VisionTransformer_MYTEMP(nn.Module):
         # After positional embeddings, we will attach prompts with the model, remember only those
         # are trainable parameters here in whole image encoder.
         if self.VPT_shallow:
-            visual_ctx_maple = shared_maple_ctx.expand(x.shape[0], -1, -1).half()
-            visual_ctx_rpo = rpo_visual_ctx_prompt.expand(x.shape[0], -1, -1).half()
-            #print(visual_ctx_maple.shape, visual_ctx_rpo.shape, x.shape, end = "\n\n\n\n\n\n")
-            x = torch.cat([x, visual_ctx_rpo, visual_ctx_maple], dim=1)
-            #print(visual_ctx_maple.shape, visual_ctx_rpo.shape, x.shape, end = "\n\n\n\n\n\n")
+            visual_ctx = shared_ctx.expand(x.shape[0], -1, -1).half()
+            x = torch.cat([x, visual_ctx], dim=1)
         else:
             assert self.prompt_till_layer_visual == 0
 
@@ -312,13 +314,12 @@ class VisionTransformer_MYTEMP(nn.Module):
 
         x = x.permute(1, 0, 2)  # NLD -> LND
         # Again combine the inputs, so nn.sequential can work
-        x = self.transformer([x, compound_deeper_prompts, 0], attn_mask=attn_mask)  # third argument is counter
-        x = x[0]
-        #print(x.shape, end = "\n\n\n\n\n\n")
+        outputs = self.transformer([x, compound_deeper_prompts, 0])  # third argument is counter
+        x = outputs[0]
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        ##x = self.ln_post(x[:, 0, :])
-        x = self.ln_post(x[:, -1 * 8:, :]) ## 8 = K
+        x = self.ln_post(x[:, 0, :])
+
         if self.proj is not None:
             x = x @ self.proj
 
@@ -342,7 +343,9 @@ class CLIP(nn.Module):
                  design_details
                  ):
         super().__init__()
+
         self.context_length = context_length
+        trainer = design_details['trainer']
 
         if isinstance(vision_layers, (tuple, list)):
             vision_heads = vision_width * 32 // 64
@@ -364,6 +367,13 @@ class CLIP(nn.Module):
                 output_dim=embed_dim,
                 design_details=design_details
             )
+
+        self.transformer = Transformer(
+            width=transformer_width,
+            layers=transformer_layers,
+            heads=transformer_heads,
+            attn_mask=self.build_attention_mask()
+        )
 
         # hyper-parameter if need to add prompt embeddings inside to the input
         # of transformer block or not:
