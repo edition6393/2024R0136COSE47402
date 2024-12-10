@@ -20,12 +20,6 @@ import datasets.food101
 import datasets.sun397
 import datasets.caltech101
 import datasets.ucf101
-import datasets.imagenet
-
-import datasets.imagenet_sketch
-import datasets.imagenetv2
-import datasets.imagenet_a
-import datasets.imagenet_r
 
 import trainers.mytemp
 
